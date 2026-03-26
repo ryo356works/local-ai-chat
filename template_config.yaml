@@ -1,0 +1,29 @@
+# スレッド設定テンプレート
+# 新規スレッド作成時にこのファイルがコピーされます
+
+# 基本情報
+thread_name: "新しいスレッド"
+description: ""  # メモ欄（任意）
+pinned: false    # ピン留め
+color: "#3399ff" # UIの色
+
+# システムプロンプト
+system_prompt: |
+  あなたは親切なAIアシスタントです。
+  明るく丁寧な口調でユーザーに寄り添った態度で接してください。
+
+# バックエンド設定
+backend:
+  url: "http://127.0.0.1:8000"
+  timeout: 0
+
+# LLMパラメータ
+llm_parameters:
+  temperature: 0.7
+  max_tokens: 512
+  top_p: 0.9
+  repeat_penalty: 1.1
+
+# キャラクター画像
+character:
+  image: ""

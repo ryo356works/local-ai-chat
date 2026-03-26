@@ -1,0 +1,28 @@
+# LLM
+llama-cpp-python
+
+# Web Framework
+fastapi
+uvicorn
+
+# GUI
+PyQt5
+PyQtWebEngine
+
+# HTTP Client
+httpx
+
+# Image Processing
+Pillow
+
+# YAML
+PyYAML
+
+# Embedding & Vector DB
+# 注意: sentence-transformers は PyTorch に依存します（約2GB）
+# 注意: embedding モデル（BAAI/bge-m3）のダウンロードに約2.2GB必要です
+# 注意: RAG機能を使わない場合、sentence-transformers と chromadb は不要です
+sentence-transformers
+chromadb
+
+# Qdrantを使う場合は追加で: pip install qdrant-client

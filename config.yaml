@@ -1,0 +1,24 @@
+# llama.cpp用の設定ファイル
+
+# UI設定
+ui:
+  font_family: "Noto Sans CJK JP"
+  font_size: 15
+  input_font_size: 15  # 入力欄専用
+  user_message_color: "#2d5f8d"  # バブル色
+  ai_message_color: "#3a3a3a"  # バブル色
+  verbose: false # true → 詳細ログ出力（デバッグ用） false → エラー・警告・重要情報のみ
+
+# LLM設定
+llm:
+  model_path: "" # GGUFモデルファイルのパス
+  n_gpu_layers: -1 # GPU設定(-1=全てGPU、0=CPU only)
+  n_ctx: 8192 # コンテキストウィンドウサイズ（トークン数）　モデルの最大コンテキスト長に合わせて設定
+  n_batch: 512 # バッチサイズ (大きいほど高速だが、VRAM使用量も増える)
+  n_threads: null # CPUスレッド数（nullで自動設定）
+
+embedding:
+  enabled: true
+  model_name: "BAAI/bge-m3" # "/path/to/downloaded/bge-m3" ← ローカルパス指定も可
+  db_url: ""  # 空白ならローカルChromaDB、指定すればリモートDB (例: http://localhost:6333)
+  chunk_size: 6  # チャンクサイズ（何発言まとめるか）

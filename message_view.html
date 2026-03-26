@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Messages</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 5px;
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #2a2a2a;
+            color: #ffffff;
+        }
+        
+        .message {
+            margin-bottom: 8px;
+            padding: 0 8px;
+            border-radius: 8px;
+            max-width: 70%;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            display: inline-block;
+            line-height: 0.5;
+        }
+        
+        .message > div {
+            margin: 0;
+            padding: 0;
+        }
+        
+        .message > span {
+            display: block;
+            margin: 0;
+            padding: 0;
+            line-height: 1.4;
+        }
+        
+        .user-message {
+            background-color: #3399ff;
+            margin-left: auto;
+            margin-right: 0;
+            text-align: right;
+            float: right;
+            clear: both;
+        }
+        
+        .assistant-message {
+            background-color: #4a4a4a;
+            margin-right: auto;
+            margin-left: 0;
+            float: left;
+            clear: both;
+        }
+        
+        .timestamp {
+            font-size: 0.7em;
+            color: #999;
+            margin: 0;
+            padding: 0;
+        }
+        
+        code {
+            background-color: #1e1e1e;
+            padding: 1px 3px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        pre {
+            background-color: #1e1e1e;
+            padding: 5px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 3px 0;
+        }
+        
+        pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="messages"></div>
+    
+    <script>
+        function addMessage(role, content, timestamp) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}-message`;
+            
+            // メッセージ内容をHTMLエスケープ
+            const escapedContent = escapeHtml(content);
+            
+            // タイムスタンプをJSTで読みやすい形式に変換
+            const formattedTime = formatTimestamp(timestamp);
+            
+            messageDiv.innerHTML = `
+                <span>${escapedContent}</span>
+                <div class="timestamp">${formattedTime}</div>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            
+            // 自動スクロール
+            window.scrollTo(0, document.body.scrollHeight);
+        }
+        
+        function formatTimestamp(timestamp) {
+            if (!timestamp) {
+                return new Date().toLocaleString('ja-JP');
+            }
+            
+            // ISO8601形式をパース（UTCとして扱う）
+            const date = new Date(timestamp);
+            
+            // ローカルタイムゾーンで表示
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1;
+            const day = date.getDate();
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            
+            return `${year}年${month}月${day}日 ${hours}:${minutes}`;
+        }
+        
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+        
+        function loadHistory(history) {
+            clearMessages();
+            history.forEach(entry => {
+                addMessage(entry.role, entry.content, entry.created_at);
+            });
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
