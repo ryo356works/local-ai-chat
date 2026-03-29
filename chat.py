@@ -938,6 +938,7 @@ class ChatWindow(QMainWindow):
         
         # 右側: メッセージエリア（WebView）
         self.message_view = QWebEngineView()
+        self.message_view.setAcceptDrops(False)  # ファイルドロップを無効化
         self.message_view.setStyleSheet("background-color: #2a2a2a; border-radius: 10px;")
         self.message_view.setMinimumWidth(300)
         
