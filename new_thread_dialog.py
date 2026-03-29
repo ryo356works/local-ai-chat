@@ -7,7 +7,7 @@ from pathlib import Path
 from io import BytesIO
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-    QLineEdit, QTextEdit, QPushButton, QCheckBox, QGroupBox, QFileDialog, QComboBox
+    QLineEdit, QTextEdit, QPushButton, QCheckBox, QGroupBox, QFileDialog, QComboBox, QSpinBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
@@ -43,6 +43,14 @@ class NewThreadDialog(QDialog):
         # 選択された画像パス
         self.selected_image_path = None
         
+        # LLMパラメータ（デフォルト値）
+        self.llm_params = {
+            'max_tokens': 512,
+            'temperature': 0.7,
+            'top_p': 0.9,
+            'repeat_penalty': 1.1,
+        }
+        
         self.init_ui()
         
         # 編集モードなら既存設定を読み込む
@@ -58,9 +66,9 @@ class NewThreadDialog(QDialog):
         threads_dir = Path("threads")
         if threads_dir.exists():
             for item in threads_dir.iterdir():
-                if item.is_dir() and (item / "config.yaml").exists():
+                if item.is_dir() and (item / "thread.yaml").exists():
                     try:
-                        with open(item / "config.yaml", 'r', encoding='utf-8') as f:
+                        with open(item / "thread.yaml", 'r', encoding='utf-8') as f:
                             config = yaml.safe_load(f)
                         group = config.get('group', '未分類')
                         groups.add(group)
@@ -81,6 +89,12 @@ class NewThreadDialog(QDialog):
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText('空白の場合、AIが自動で命名します')
         name_layout.addWidget(self.name_input)
+        
+        # 編集モードの時はスレッドIDを表示
+        if self.edit_mode and self.thread_id:
+            thread_id_label = QLabel(f"スレッドID: {self.thread_id}")
+            thread_id_label.setStyleSheet("color: #888; font-size: 11px;")
+            name_layout.addWidget(thread_id_label)
         
         layout.addWidget(name_group)
         
@@ -138,6 +152,25 @@ class NewThreadDialog(QDialog):
         self.backend_input.setPlaceholderText('http://127.0.0.1:8000')
         backend_layout.addWidget(self.backend_input)
         
+        # タイムアウト
+        timeout_layout = QHBoxLayout()
+        timeout_label = QLabel("タイムアウト:")
+        timeout_label.setStyleSheet("font-weight: normal;")
+        timeout_layout.addWidget(timeout_label)
+        
+        self.timeout_input = QSpinBox()
+        self.timeout_input.setRange(0, 86400)  # 0〜24時間
+        self.timeout_input.setValue(0)
+        self.timeout_input.setFixedWidth(80)
+        self.timeout_input.setSuffix(" 秒")
+        timeout_layout.addWidget(self.timeout_input)
+        
+        note_label = QLabel("(0 = 無効)")
+        note_label.setStyleSheet("color: #888; font-size: 11px; font-weight: normal;")
+        timeout_layout.addWidget(note_label)
+        timeout_layout.addStretch()
+        backend_layout.addLayout(timeout_layout)
+        
         layout.addWidget(backend_group)
         
         # キャラクター画像
@@ -180,15 +213,6 @@ class NewThreadDialog(QDialog):
         prompt_layout = QVBoxLayout(prompt_group)
         
         # テンプレート読込ボタン
-        template_btn_layout = QHBoxLayout()
-        template_btn_layout.addStretch()
-        
-        self.load_template_btn = QPushButton('テンプレートを再読込')
-        self.load_template_btn.clicked.connect(self.load_template)
-        template_btn_layout.addWidget(self.load_template_btn)
-        
-        prompt_layout.addLayout(template_btn_layout)
-        
         self.prompt_input = QTextEdit()
         self.prompt_input.setMinimumHeight(150)
         prompt_layout.addWidget(self.prompt_input)
@@ -197,23 +221,29 @@ class NewThreadDialog(QDialog):
         
         # オプション
         options_layout = QHBoxLayout()
-        
         self.pinned_checkbox = QCheckBox('ピン留めする')
         options_layout.addWidget(self.pinned_checkbox)
-        
-        options_layout.addStretch()
-        
         layout.addLayout(options_layout)
         
-        # ボタン
+        # ボタン行（テンプレート再読込 / LLM設定 / キャンセル / 作成）
         button_layout = QHBoxLayout()
+        
+        self.load_template_btn = QPushButton('テンプレートを再読込')
+        self.load_template_btn.clicked.connect(self.load_template)
+        button_layout.addWidget(self.load_template_btn)
+        
         button_layout.addStretch()
+        
+        llm_settings_btn = QPushButton('LLM設定')
+        llm_settings_btn.clicked.connect(self.open_llm_settings)
+        button_layout.addWidget(llm_settings_btn)
         
         cancel_btn = QPushButton('キャンセル')
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
         
-        create_btn = QPushButton('作成')
+        ok_label = '更新' if self.edit_mode else '作成'
+        create_btn = QPushButton(ok_label)
         create_btn.clicked.connect(self.accept_dialog)
         create_btn.setDefault(True)
         button_layout.addWidget(create_btn)
@@ -315,6 +345,12 @@ class NewThreadDialog(QDialog):
             }
         """)
     
+    def open_llm_settings(self):
+        """LLM設定ダイアログを開く"""
+        dlg = LLMSettingsDialog(self, llm_params=self.llm_params)
+        if dlg.exec_() == LLMSettingsDialog.Accepted:
+            self.llm_params = dlg.get_params()
+    
     def select_image(self):
         """画像を選択"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -371,7 +407,7 @@ class NewThreadDialog(QDialog):
     def load_template(self):
         """テンプレートを読み込む"""
         try:
-            template_path = Path("template_config.yaml")
+            template_path = Path("template_thread.yaml")
             if template_path.exists():
                 with open(template_path, 'r', encoding='utf-8') as f:
                     template = yaml.safe_load(f)
@@ -385,18 +421,27 @@ class NewThreadDialog(QDialog):
                 backend_url = template.get('backend', {}).get('url', 'http://127.0.0.1:8000')
                 self.backend_input.setText(backend_url)
                 
+                # タイムアウトを設定
+                timeout = template.get('backend', {}).get('timeout', 0)
+                self.timeout_input.setValue(int(timeout) if timeout else 0)
+                
                 # デフォルト画像を読み込む
                 default_image = template.get('character', {}).get('image', '')
                 if default_image and Path(default_image).exists():
                     self.selected_image_path = default_image
                     self.update_image_preview(default_image)
+                
+                # LLMパラメータを読み込む
+                llm_params = template.get('llm_parameters', {})
+                if llm_params:
+                    self.llm_params.update(llm_params)
         except Exception as e:
             print(f"Template load error: {e}")
     
     def load_existing_config(self):
         """既存のスレッド設定を読み込む（編集モード）"""
         try:
-            config_path = Path("threads") / self.thread_id / "config.yaml"
+            config_path = Path("threads") / self.thread_id / "thread.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
@@ -422,6 +467,10 @@ class NewThreadDialog(QDialog):
                 backend_url = config.get('backend', {}).get('url', 'http://127.0.0.1:8000')
                 self.backend_input.setText(backend_url)
                 
+                # タイムアウト
+                timeout = config.get('backend', {}).get('timeout', 0)
+                self.timeout_input.setValue(int(timeout) if timeout else 0)
+                
                 # システムプロンプト
                 self.prompt_input.setPlainText(
                     config.get('system_prompt', 'あなたは親切なAIアシスタントです。')
@@ -429,6 +478,11 @@ class NewThreadDialog(QDialog):
                 
                 # ピン留め
                 self.pinned_checkbox.setChecked(config.get('pinned', False))
+                
+                # LLMパラメータ
+                llm_params = config.get('llm_parameters', {})
+                if llm_params:
+                    self.llm_params.update(llm_params)
                 
                 # キャラクター画像
                 image_path = config.get('character', {}).get('image', '')
@@ -442,14 +496,16 @@ class NewThreadDialog(QDialog):
         """ダイアログを受け入れる"""
         # 設定を作成
         self.thread_config = {
-            'thread_name': self.name_input.text().strip() or '',  # 空文字列の場合は後でAI命名
-            'user_name': self.user_name_input.text().strip(),  # ユーザー名（任意）
-            'group': self.group_input.currentText().strip() or '未分類',  # グループ名
+            'thread_name': self.name_input.text().strip() or '',
+            'user_name': self.user_name_input.text().strip(),
+            'group': self.group_input.currentText().strip() or '未分類',
             'description': self.desc_input.toPlainText().strip(),
             'backend_url': self.backend_input.text().strip() or 'http://127.0.0.1:8000',
+            'backend_timeout': self.timeout_input.value(),
             'system_prompt': self.prompt_input.toPlainText().strip(),
             'pinned': self.pinned_checkbox.isChecked(),
-            'image_path': self.selected_image_path  # 画像パスを保存
+            'image_path': self.selected_image_path,
+            'llm_parameters': self.llm_params,
         }
         
         self.accept()
@@ -457,3 +513,87 @@ class NewThreadDialog(QDialog):
     def get_config(self):
         """設定を取得"""
         return self.thread_config
+
+
+class LLMSettingsDialog(QDialog):
+    """LLMパラメータ設定ダイアログ"""
+
+    def __init__(self, parent=None, llm_params=None):
+        super().__init__(parent)
+        self.setWindowTitle('LLM設定')
+        self.setMinimumWidth(350)
+        self.setStyleSheet("""
+            QDialog { background-color: #2a2a2a; color: white; }
+            QGroupBox {
+                border: 1px solid #3a3a3a; border-radius: 5px;
+                margin-top: 10px; padding-top: 10px;
+                font-weight: bold; color: white;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin; left: 10px;
+                padding: 0 5px; color: white;
+            }
+            QLabel { color: white; }
+            QLineEdit {
+                background-color: #3a3a3a; border: 1px solid #555;
+                border-radius: 5px; padding: 8px; color: white;
+            }
+            QPushButton {
+                background-color: #3399ff; border: none;
+                border-radius: 5px; padding: 8px 16px; color: white;
+            }
+            QPushButton:hover { background-color: #2277dd; }
+        """)
+
+        params = llm_params or {}
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        group = QGroupBox("パラメータ")
+        form = QVBoxLayout(group)
+
+        def make_row(label_text, default):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setFixedWidth(130)
+            inp = QLineEdit(str(default))
+            inp.setFixedWidth(100)
+            row.addWidget(label)
+            row.addWidget(inp)
+            row.addStretch()
+            form.addLayout(row)
+            return inp
+
+        self.max_tokens_input    = make_row("max_tokens",     params.get('max_tokens', 512))
+        self.temperature_input   = make_row("temperature",    params.get('temperature', 0.7))
+        self.top_p_input         = make_row("top_p",          params.get('top_p', 0.9))
+        self.repeat_penalty_input= make_row("repeat_penalty", params.get('repeat_penalty', 1.1))
+
+        layout.addWidget(group)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QPushButton('キャンセル')
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        ok_btn = QPushButton('OK')
+        ok_btn.clicked.connect(self.accept)
+        ok_btn.setDefault(True)
+        btn_layout.addWidget(ok_btn)
+        layout.addLayout(btn_layout)
+
+    def get_params(self):
+        """入力値を取得"""
+        def to_float(s, default):
+            try: return float(s)
+            except: return default
+        def to_int(s, default):
+            try: return int(s)
+            except: return default
+
+        return {
+            'max_tokens':     to_int(self.max_tokens_input.text(), 512),
+            'temperature':    to_float(self.temperature_input.text(), 0.7),
+            'top_p':          to_float(self.top_p_input.text(), 0.9),
+            'repeat_penalty': to_float(self.repeat_penalty_input.text(), 1.1),
+        }

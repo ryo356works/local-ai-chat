@@ -20,7 +20,8 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTextEdit, QPushButton, QLabel, QListWidget, QListWidgetItem,
     QTreeWidget, QTreeWidgetItem,
-    QSplitter, QFrame, QInputDialog, QMessageBox, QAction
+    QSplitter, QFrame, QInputDialog, QMessageBox, QAction,
+    QScrollArea
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt, QUrl, QTimer, QSize
@@ -40,6 +41,36 @@ except ImportError:
 # グローバル変数：バックエンドプロセスとアクティビティ
 backend_processes = {}  # {backend_url: process}
 backend_activities = {}  # {backend_url: last_activity_datetime}
+
+
+class DropTextEdit(QTextEdit):
+    """ファイルドロップ対応のQTextEdit"""
+    
+    def __init__(self, on_file_drop, parent=None):
+        super().__init__(parent)
+        self.on_file_drop = on_file_drop
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+    
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path and Path(file_path).is_file():
+                    self.on_file_drop(file_path)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
 
 
 class ThreadListWidget(QListWidget):
@@ -313,9 +344,9 @@ class ThreadTreeWidget(QTreeWidget):
                 if self.verbose:
                     print(f"Moving thread {thread_id}: {old_group_name} -> {new_group_name}")
                 
-                # config.yamlを更新
+                # thread.yamlを更新
                 try:
-                    config_path = Path("threads") / thread_id / "config.yaml"
+                    config_path = Path("threads") / thread_id / "thread.yaml"
                     with open(config_path, 'r', encoding='utf-8') as f:
                         config = yaml.safe_load(f)
                     
@@ -681,7 +712,7 @@ class ChatWindow(QMainWindow):
             QMessageBox.warning(self, '警告', 'スレッドが選択されていません')
             return
         
-        config_path = Path("threads") / self.current_thread_id / "config.yaml"
+        config_path = Path("threads") / self.current_thread_id / "thread.yaml"
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
@@ -811,7 +842,7 @@ class ChatWindow(QMainWindow):
         
         if last_thread:
             # 最後のスレッドが存在するか確認
-            thread_path = Path("threads") / last_thread / "config.yaml"
+            thread_path = Path("threads") / last_thread / "thread.yaml"
             if thread_path.exists():
                 return last_thread
         
@@ -821,7 +852,7 @@ class ChatWindow(QMainWindow):
             if threads_dir.exists():
                 threads = [
                     item.name for item in threads_dir.iterdir()
-                    if item.is_dir() and (item / "config.yaml").exists()
+                    if item.is_dir() and (item / "thread.yaml").exists()
                 ]
                 if threads:
                     return sorted(threads)[0]
@@ -844,7 +875,7 @@ class ChatWindow(QMainWindow):
         """UIを初期化"""
         self.setWindowTitle('AI Assistant')
         
-        # config.yamlからウィンドウサイズを取得
+        # thread.yamlからウィンドウサイズを取得
         width, height = self.ui_state.get_window_size()
         self.setGeometry(100, 100, width, height)
         
@@ -938,7 +969,6 @@ class ChatWindow(QMainWindow):
         
         # 右側: メッセージエリア（WebView）
         self.message_view = QWebEngineView()
-        self.message_view.setAcceptDrops(False)  # ファイルドロップを無効化
         self.message_view.setStyleSheet("background-color: #2a2a2a; border-radius: 10px;")
         self.message_view.setMinimumWidth(300)
         
@@ -973,12 +1003,23 @@ class ChatWindow(QMainWindow):
         content_layout.addWidget(self.main_splitter, stretch=8)
         
         # 下部: 入力エリア
+        # ファイルタグ表示エリア（ドロップされたファイルのバッジ）
+        self.dropped_files = []  # ドロップされたファイルパスのリスト
+        self.file_tag_area = QWidget()
+        self.file_tag_area.setVisible(False)
+        self.file_tag_layout = QHBoxLayout(self.file_tag_area)
+        self.file_tag_layout.setContentsMargins(0, 2, 0, 2)
+        self.file_tag_layout.setSpacing(4)
+        self.file_tag_layout.addStretch()
+        content_layout.addWidget(self.file_tag_area)
+
         input_layout = QHBoxLayout()
         
-        self.input_text = QTextEdit()
-        self.input_text.setPlaceholderText('メッセージを入力...')
+        self.input_text = DropTextEdit(on_file_drop=self.add_file_tag)
+        self.input_text.setPlaceholderText('メッセージを入力... / ファイルをドロップして添付')
         self.input_text.setMaximumHeight(100)
         self.input_text.installEventFilter(self)
+        self.input_text.setAcceptDrops(True)
         
         # 入力欄のフォントサイズを設定
         input_font_size = self.ui_state.get_ui_config('input_font_size', 14)
@@ -1112,7 +1153,7 @@ class ChatWindow(QMainWindow):
     def get_thread_backend_url(self, thread_id):
         """スレッドのバックエンドURLを取得"""
         try:
-            config_path = Path("threads") / thread_id / "config.yaml"
+            config_path = Path("threads") / thread_id / "thread.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
@@ -1138,10 +1179,10 @@ class ChatWindow(QMainWindow):
                             continue
                         
                         # 通常のスレッド
-                        if (item / "config.yaml").exists():
+                        if (item / "thread.yaml").exists():
                             thread_id = item.name
                             try:
-                                config_path = item / "config.yaml"
+                                config_path = item / "thread.yaml"
                                 with open(config_path, 'r', encoding='utf-8') as f:
                                     config = yaml.safe_load(f)
                                 
@@ -1290,7 +1331,7 @@ class ChatWindow(QMainWindow):
                 thread_id = child.data(0, Qt.UserRole)
                 if thread_id:
                     try:
-                        config_path = Path("threads") / thread_id / "config.yaml"
+                        config_path = Path("threads") / thread_id / "thread.yaml"
                         with open(config_path, 'r', encoding='utf-8') as f:
                             config = yaml.safe_load(f)
                         config['group'] = new_name
@@ -1330,7 +1371,7 @@ class ChatWindow(QMainWindow):
                 thread_id = child.data(0, Qt.UserRole)
                 if thread_id:
                     try:
-                        config_path = Path("threads") / thread_id / "config.yaml"
+                        config_path = Path("threads") / thread_id / "thread.yaml"
                         with open(config_path, 'r', encoding='utf-8') as f:
                             config = yaml.safe_load(f)
                         config['group'] = '未分類'
@@ -1441,6 +1482,7 @@ class ChatWindow(QMainWindow):
                             "description": config['description'],
                             "system_prompt": config['system_prompt'],
                             "backend_url": config['backend_url'],
+                            "backend_timeout": config.get('backend_timeout', 0),
                             "pinned": config['pinned'],
                             "needs_auto_naming": needs_auto_naming,
                             "character_image_path": ""  # 後で更新するので一旦空
@@ -1461,8 +1503,8 @@ class ChatWindow(QMainWindow):
                         dest_path = images_dir / f"character{image_ext}"
                         shutil.copy(source_image_path, dest_path)
                         
-                        # config.yamlの画像パスを更新
-                        config_path = Path("threads") / thread_id / "config.yaml"
+                        # thread.yamlの画像パスを更新
+                        config_path = Path("threads") / thread_id / "thread.yaml"
                         if config_path.exists():
                             with open(config_path, 'r', encoding='utf-8') as f:
                                 thread_config = yaml.safe_load(f)
@@ -1501,10 +1543,115 @@ class ChatWindow(QMainWindow):
         
         return super().eventFilter(obj, event)
     
+    def add_file_tag(self, file_path: str):
+        """ファイルタグをバッジとして追加"""
+        if file_path in self.dropped_files:
+            return  # 重複追加しない
+        
+        self.dropped_files.append(file_path)
+        
+        file_name = Path(file_path).name
+        
+        # タグウィジェット
+        tag_widget = QWidget()
+        tag_widget.setStyleSheet(
+            "QWidget { background-color: #3a5f8a; border-radius: 4px; padding: 2px; }"
+        )
+        tag_layout = QHBoxLayout(tag_widget)
+        tag_layout.setContentsMargins(6, 2, 4, 2)
+        tag_layout.setSpacing(4)
+        
+        # ファイル名ラベル
+        label = QLabel(f"📄 {file_name}")
+        label.setStyleSheet("color: #ffffff; font-size: 12px; background: transparent;")
+        tag_layout.addWidget(label)
+        
+        # 削除ボタン
+        remove_btn = QPushButton("×")
+        remove_btn.setFixedSize(16, 16)
+        remove_btn.setStyleSheet(
+            "QPushButton { color: #aaaaaa; background: transparent; border: none; font-size: 12px; }"
+            "QPushButton:hover { color: #ffffff; }"
+        )
+        remove_btn.clicked.connect(lambda checked, p=file_path, w=tag_widget: self.remove_file_tag(p, w))
+        tag_layout.addWidget(remove_btn)
+        
+        # stretchの前に挿入
+        self.file_tag_layout.insertWidget(self.file_tag_layout.count() - 1, tag_widget)
+        self.file_tag_area.setVisible(True)
+    
+    def remove_file_tag(self, file_path: str, tag_widget: QWidget):
+        """ファイルタグを削除"""
+        if file_path in self.dropped_files:
+            self.dropped_files.remove(file_path)
+        tag_widget.deleteLater()
+        if not self.dropped_files:
+            self.file_tag_area.setVisible(False)
+    
+    def clear_file_tags(self):
+        """全ファイルタグをクリア"""
+        self.dropped_files.clear()
+        # stretchを除くウィジェットを削除
+        while self.file_tag_layout.count() > 1:
+            item = self.file_tag_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.file_tag_area.setVisible(False)
+    
     def send_message(self):
         """メッセージを送信"""
-        message = self.input_text.toPlainText().strip()
-        if not message:
+        user_text = self.input_text.toPlainText().strip()
+        
+        # 表示用メッセージと送信用メッセージを分離
+        display_message = user_text  # メッセージエリアに表示する内容
+        send_message = user_text     # バックエンドに送信する内容（ファイル内容付き）
+        
+        # ファイルが添付されている場合
+        if self.dropped_files:
+            file_names = []
+            file_contents = []
+            for file_path in self.dropped_files:
+                file_name = Path(file_path).name
+                file_names.append(f"📄 {file_name}")
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    file_contents.append(f"--- {file_name} ---\n{content}")
+                except UnicodeDecodeError:
+                    # バイナリファイル: MIMEタイプとサイズを添えてLLMに判断させる
+                    import mimetypes
+                    mime_type, _ = mimetypes.guess_type(file_path)
+                    mime_type = mime_type or "application/octet-stream"
+                    file_size = Path(file_path).stat().st_size
+                    if file_size < 1024:
+                        size_str = f"{file_size}B"
+                    elif file_size < 1024 * 1024:
+                        size_str = f"{file_size / 1024:.1f}KB"
+                    else:
+                        size_str = f"{file_size / (1024 * 1024):.1f}MB"
+                    file_contents.append(
+                        f"--- {file_name} ---\n"
+                        f"[バイナリファイル / {mime_type} / {size_str}]\n"
+                        f"！！重要！！バイナリファイルが含まれています、対応不可の場合は対応できなかったファイル名と理由をユーザーへの返答に含めてください。"
+                    )
+                except Exception as e:
+                    file_contents.append(f"--- {file_name} ---\n(読み込みエラー: {e})")
+            
+            # 表示用: ファイル名のみ
+            files_label = "  ".join(file_names)
+            if user_text:
+                display_message = f"{files_label}\n{user_text}"
+            else:
+                display_message = files_label
+            
+            # 送信用: ファイル内容を付加
+            files_text = "\n\n".join(file_contents)
+            if user_text:
+                send_message = f"以下のファイルが添付されています:\n\n{files_text}\n\n---\n{user_text}"
+            else:
+                send_message = f"以下のファイルが添付されています:\n\n{files_text}"
+        
+        if not display_message:
             return
         
         if self.verbose:
@@ -1524,19 +1671,20 @@ class ChatWindow(QMainWindow):
         
         # 入力欄をクリア
         self.input_text.clear()
+        self.clear_file_tags()
         
-        # ユーザーメッセージを表示
-        self.add_message_to_view('user', message)
+        # ユーザーメッセージを表示（ファイル名のみ）
+        self.add_message_to_view('user', display_message)
         
         # 最後のスレッドとして保存
         self.save_last_thread(self.current_thread_id)
         
-        # バックエンドに送信
+        # バックエンドに送信（ファイル内容付き）
         try:
             response = self.client.post(
                 f"{self.backend_url}/chat",
                 json={
-                    "user_message": message,
+                    "user_message": send_message,
                     "thread_id": self.current_thread_id
                 }
             )
@@ -1548,7 +1696,7 @@ class ChatWindow(QMainWindow):
             self.add_message_to_view('assistant', ai_response)
             
             # AI自動命名チェック
-            self.check_and_auto_name_thread(message, ai_response)
+            self.check_and_auto_name_thread(send_message, ai_response)
             
         except Exception as e:
             print(f"Error: {e}")
@@ -1563,7 +1711,7 @@ class ChatWindow(QMainWindow):
     def check_and_auto_name_thread(self, user_message, ai_response):
         """AI自動命名が必要かチェックして実行"""
         try:
-            config_path = Path("threads") / self.current_thread_id / "config.yaml"
+            config_path = Path("threads") / self.current_thread_id / "thread.yaml"
             if not config_path.exists():
                 return
             
@@ -1688,7 +1836,7 @@ AI: {ai_response}
     def update_thread_name(self, title):
         """スレッド名を更新"""
         try:
-            config_path = Path("threads") / self.current_thread_id / "config.yaml"
+            config_path = Path("threads") / self.current_thread_id / "thread.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
@@ -1722,7 +1870,7 @@ AI: {ai_response}
         
         if ok and new_name.strip():
             try:
-                config_path = Path("threads") / thread_id / "config.yaml"
+                config_path = Path("threads") / thread_id / "thread.yaml"
                 if config_path.exists():
                     with open(config_path, 'r', encoding='utf-8') as f:
                         config = yaml.safe_load(f)
@@ -1744,7 +1892,7 @@ AI: {ai_response}
     def get_thread_pinned_status(self, thread_id):
         """スレッドのピン留め状態を取得"""
         try:
-            config_path = Path("threads") / thread_id / "config.yaml"
+            config_path = Path("threads") / thread_id / "thread.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
@@ -1755,7 +1903,7 @@ AI: {ai_response}
     def toggle_thread_pin(self, thread_id):
         """スレッドのピン留めを切り替え"""
         try:
-            config_path = Path("threads") / thread_id / "config.yaml"
+            config_path = Path("threads") / thread_id / "thread.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
@@ -1784,8 +1932,8 @@ AI: {ai_response}
                 item = list_widget.item(index)
                 thread_id = item.data(Qt.UserRole)
                 
-                # config.yamlにdisplay_orderを保存
-                config_path = Path("threads") / thread_id / "config.yaml"
+                # thread.yamlにdisplay_orderを保存
+                config_path = Path("threads") / thread_id / "thread.yaml"
                 if config_path.exists():
                     with open(config_path, 'r', encoding='utf-8') as f:
                         config = yaml.safe_load(f)
@@ -1811,8 +1959,8 @@ AI: {ai_response}
                 if not thread_id:
                     continue
                 
-                # config.yamlにdisplay_orderを保存
-                config_path = Path("threads") / thread_id / "config.yaml"
+                # thread.yamlにdisplay_orderを保存
+                config_path = Path("threads") / thread_id / "thread.yaml"
                 if config_path.exists():
                     with open(config_path, 'r', encoding='utf-8') as f:
                         config = yaml.safe_load(f)
@@ -1836,7 +1984,7 @@ AI: {ai_response}
             
             if config:
                 try:
-                    config_path = Path("threads") / thread_id / "config.yaml"
+                    config_path = Path("threads") / thread_id / "thread.yaml"
                     
                     # 既存設定を読み込む
                     with open(config_path, 'r', encoding='utf-8') as f:
@@ -1853,7 +2001,7 @@ AI: {ai_response}
                     # バックエンドURL
                     existing_config['backend'] = {
                         'url': config['backend_url'],
-                        'timeout': 300
+                        'timeout': config.get('backend_timeout', 0)
                     }
                     
                     # 画像を更新
@@ -1940,7 +2088,7 @@ AI: {ai_response}
                         threads_dir = Path("threads")
                         remaining_threads = [
                             item.name for item in threads_dir.iterdir()
-                            if item.is_dir() and (item / "config.yaml").exists()
+                            if item.is_dir() and (item / "thread.yaml").exists()
                         ]
                         
                         if remaining_threads:
@@ -1977,7 +2125,7 @@ AI: {ai_response}
             import time
             start = time.time()
             
-            config_path = Path("threads") / self.current_thread_id / "config.yaml"
+            config_path = Path("threads") / self.current_thread_id / "thread.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
@@ -2044,7 +2192,7 @@ AI: {ai_response}
         try:
             if self.verbose:
                 print(f"Loading backend URL for thread: {self.current_thread_id}")
-            config_path = Path("threads") / self.current_thread_id / "config.yaml"
+            config_path = Path("threads") / self.current_thread_id / "thread.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
@@ -2216,7 +2364,8 @@ AI: {ai_response}
             # 標準出力・エラー出力を継承してリアルタイム表示
             process = subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", port, "--log-level", log_level],
-                cwd=str(Path(__file__).parent)
+                cwd=str(Path(__file__).parent),
+                env={**os.environ, "BACKEND_URL": self.backend_url}
             )
             
             # プロセスを辞書に保存
@@ -2319,7 +2468,7 @@ AI: {ai_response}
         if threads_dir.exists():
             for thread_dir in threads_dir.iterdir():
                 if thread_dir.is_dir() and not thread_dir.name.startswith('_'):
-                    config_path = thread_dir / "config.yaml"
+                    config_path = thread_dir / "thread.yaml"
                     if config_path.exists():
                         try:
                             with open(config_path, 'r', encoding='utf-8') as f:

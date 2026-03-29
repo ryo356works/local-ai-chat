@@ -24,15 +24,15 @@ class ThreadManager:
         
         for item in self.threads_dir.iterdir():
             if item.is_dir():
-                # config.yamlが存在するディレクトリのみ
-                if (item / "config.yaml").exists():
+                # thread.yamlが存在するディレクトリのみ
+                if (item / "thread.yaml").exists():
                     threads.append(item.name)
         
         return sorted(threads)
     
     def get_thread_config(self, thread_id: str) -> Optional[Dict]:
         """スレッドの設定を取得"""
-        config_path = self.threads_dir / thread_id / "config.yaml"
+        config_path = self.threads_dir / thread_id / "thread.yaml"
         
         if not config_path.exists():
             return None
@@ -49,7 +49,7 @@ class ThreadManager:
         thread_dir = self.threads_dir / thread_id
         thread_dir.mkdir(exist_ok=True)
         
-        config_path = thread_dir / "config.yaml"
+        config_path = thread_dir / "thread.yaml"
         
         with open(config_path, 'w', encoding='utf-8') as f:
             yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
@@ -67,9 +67,9 @@ class ThreadManager:
         (thread_dir / "embeddings").mkdir()
         (thread_dir / "images").mkdir()
         
-        # template_config.yamlからconfig.yamlをコピー
-        template_config_path = Path("template_config.yaml")
-        target_config = thread_dir / "config.yaml"
+        # template_thread.yamlからthread.yamlをコピー
+        template_config_path = Path("template_thread.yaml")
+        target_config = thread_dir / "thread.yaml"
         
         if template_config_path.exists():
             import shutil
@@ -100,7 +100,7 @@ class ThreadManager:
             with open(target_config, 'w', encoding='utf-8') as f:
                 yaml.dump(default_config, f, allow_unicode=True, default_flow_style=False)
         
-        # config.yamlを更新
+        # thread.yamlを更新
         config = self.get_thread_config(thread_id)
         config['created_at'] = datetime.now(timezone.utc).isoformat()
         

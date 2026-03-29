@@ -4,7 +4,7 @@ import yaml
 import os
 from datetime import datetime, timezone
 import json
-from typing import Optional
+from typing import Optional, List
 from llama_cpp import Llama
 from thread_manager import ThreadManager
 from embedding_manager import EmbeddingManager
@@ -148,6 +148,7 @@ class MessageRequest(BaseModel):
     """ユーザーからのメッセージを含むリクエストボディ"""
     user_message: str
     thread_id: Optional[str] = "default"
+    images: Optional[List[str]] = None  # base64エンコードされた画像リスト（mime_type:base64data形式）
 
 class ChatResponse(BaseModel):
     """LLMからの応答を含むレスポンスボディ"""
@@ -245,7 +246,20 @@ async def chat_with_llm(req: MessageRequest):
     for entry in history_from_file:
         messages.append({"role": entry["role"], "content": entry["content"]})
     
-    messages.append({"role": "user", "content": req.user_message})
+    # ユーザーメッセージを組み立て（画像があればマルチモーダル形式）
+    if req.images:
+        user_content = []
+        for img_data in req.images:
+            # "mime_type:base64data" 形式
+            mime_type, b64data = img_data.split(":", 1)
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type};base64,{b64data}"}
+            })
+        user_content.append({"type": "text", "text": req.user_message})
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": req.user_message})
     
     if VERBOSE:
         print(f"Thread: {thread_id}, メッセージ履歴: {len(messages)}件")
@@ -263,7 +277,14 @@ async def chat_with_llm(req: MessageRequest):
         
         # 応答の抽出
         if response and 'choices' in response and len(response['choices']) > 0:
-            ai_response = response['choices'][0]['message']['content'].strip()
+            content = response['choices'][0]['message']['content']
+            # contentがlistの場合（VLMのマルチモーダルレスポンス）はテキスト部分を抽出
+            if isinstance(content, list):
+                ai_response = " ".join(
+                    item.get('text', '') for item in content if isinstance(item, dict)
+                ).strip()
+            else:
+                ai_response = content.strip()
             
             # 履歴に保存
             thread_manager.append_to_history(thread_id, "user", req.user_message)
@@ -348,11 +369,12 @@ class CreateThreadRequest(BaseModel):
     """スレッド作成リクエスト"""
     thread_id: str
     thread_name: str = ""
-    user_name: str = ""  # ユーザー名（任意）
-    group: str = "未分類"  # グループ名
+    user_name: str = ""
+    group: str = "未分類"
     description: str = ""
     system_prompt: str = ""
     backend_url: str = "http://127.0.0.1:8000"
+    backend_timeout: int = 0
     pinned: bool = False
     needs_auto_naming: bool = False
     character_image_path: Optional[str] = None
@@ -394,7 +416,7 @@ async def create_thread_endpoint(req: CreateThreadRequest):
         # バックエンドURL
         config['backend'] = {
             'url': req.backend_url,
-            'timeout': 300
+            'timeout': req.backend_timeout
         }
         
         # 自動命名フラグ
